@@ -1,0 +1,7 @@
+# hotsteel0.1 - 轻量中文文本生成语言模型
+# Python >= 3.10
+torch>=2.2.0
+tokenizers>=0.15.0
+numpy>=1.24.0
+PyYAML>=6.0
+tqdm>=4.66.0

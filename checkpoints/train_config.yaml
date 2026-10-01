@@ -1,0 +1,58 @@
+project:
+  name: hotsteel0.1
+  seed: 1337
+paths:
+  corpus: data/corpus_zh.jsonl
+  tokenizer_dir: data/tokenizer
+  checkpoint_dir: checkpoints
+  log_dir: checkpoints/logs
+data:
+  max_seq_len: 256
+  val_ratio: 0.02
+  num_workers: 0
+  packing: false
+  mask_instruction: true
+tokenizer:
+  vocab_size: 4096
+  min_frequency: 2
+  special_tokens:
+  - <pad>
+  - <|user|>
+  - <|assistant|>
+  - <|end|>
+  - <unk>
+model:
+  d_model: 384
+  n_layer: 6
+  n_head: 6
+  d_ff: 1024
+  dropout: 0.1
+  rope_theta: 10000.0
+  tie_embeddings: true
+  use_swiglu: true
+train:
+  batch_size: 64
+  grad_accum_steps: 1
+  lr: 0.0003
+  min_lr: 3.0e-05
+  weight_decay: 0.1
+  betas:
+  - 0.9
+  - 0.95
+  grad_clip: 1.0
+  warmup_iters: 150
+  max_iters: 600
+  eval_interval: 50
+  eval_iters: 30
+  log_interval: 20
+  save_interval: 200
+  device: auto
+  dtype: auto
+  compile: false
+generate:
+  max_new_tokens: 128
+  temperature: 0.8
+  top_k: 40
+  top_p: 0.9
+  repetition_penalty: 1.1
+  greedy: false
