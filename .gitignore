@@ -9,10 +9,28 @@ __pycache__/
 venv/
 env/
 
-# 模型权重与日志（体积大，不入库；请见 README 自行训练生成）
-checkpoints/*.pt
-checkpoints/logs/
+# 模型权重 / 导出产物 / 原始大语料（体积大，不入库；请见 README 自行生成）
+checkpoints/
+checkpoints_100m/
+checkpoints_v2/
+export/
+data/raw/
+data/*.jsonl
+*.gguf
+*.safetensors
+*.pt
+
+# 调试输出 / 临时文件
 *.log
+data/ppl_*.txt
+data/t1.txt
+data/t2.txt
+data/t3.txt
+data/t4.txt
+cli_out.txt
+cli_err.txt
+cnv_out.txt
+tok_llama.txt
 
 # 编辑器 / 系统
 .vscode/

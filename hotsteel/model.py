@@ -29,6 +29,9 @@ class ModelConfig:
     max_seq_len: int = 256
     tie_embeddings: bool = True
     use_swiglu: bool = True
+    rms_norm_eps: float = 1e-6
+    # 供 HF / GGUF 导出记录（不影响训练）
+    model_type: str = "hotsteel"
 
     def __post_init__(self) -> None:
         if self.d_model % self.n_head != 0:
@@ -36,7 +39,7 @@ class ModelConfig:
 
 
 class RMSNorm(nn.Module):
-    """Root Mean Square LayerNorm。"""
+    """Root Mean Square LayerNorm（与 Llama 一致，eps 默认 1e-6）。"""
 
     def __init__(self, dim: int, eps: float = 1e-6):
         super().__init__()
@@ -51,24 +54,32 @@ class RMSNorm(nn.Module):
 def precompute_rope(
     head_dim: int, max_seq_len: int, theta: float, device=None, dtype=torch.float32
 ):
-    """预计算 RoPE 的 cos / sin 表，形状 (max_seq_len, head_dim)。"""
-    half = head_dim // 2
-    freqs = 1.0 / (theta ** (torch.arange(0, half, device=device, dtype=torch.float32) / half))
+    """预计算 RoPE 的 cos / sin 表，形状 (max_seq_len, head_dim)。
+
+    严格遵循 **HuggingFace Llama** 的约定（half-split / rotate_half），
+    以保证导出的 GGUF 在 llama.cpp 中结果正确。
+    """
+    inv_freq = 1.0 / (
+        theta ** (torch.arange(0, head_dim, 2, device=device, dtype=torch.float32) / head_dim)
+    )
     t = torch.arange(max_seq_len, device=device, dtype=torch.float32)
-    angles = torch.outer(t, freqs)  # (T, half)
-    cos = angles.cos().to(dtype)
-    sin = angles.sin().to(dtype)
-    return cos, sin
+    freqs = torch.outer(t, inv_freq)                 # (T, head_dim/2)
+    emb = torch.cat((freqs, freqs), dim=-1)          # (T, head_dim) —— 复制为前后两半
+    return emb.cos().to(dtype), emb.sin().to(dtype)
+
+
+def rotate_half(x: torch.Tensor) -> torch.Tensor:
+    """Llama 风格旋转：前半与后半交换并取负。"""
+    x1 = x[..., : x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2 :]
+    return torch.cat((-x2, x1), dim=-1)
 
 
 def apply_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-    """对 (B, H, T, D) 的 q/k 施加旋转位置编码。"""
-    # x: (B, H, T, D)  cos/sin: (T, D/2)
-    x1, x2 = x[..., ::2], x[..., 1::2]  # 交错拆分，与 half 旋转等价
+    """对 (B, H, T, D) 的 q/k 施加 Llama 标准 RoPE。"""
     cos = cos[None, None, :, :]
     sin = sin[None, None, :, :]
-    out = torch.stack([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1)
-    return out.flatten(-2)
+    return x * cos + rotate_half(x) * sin
 
 
 class CausalSelfAttention(nn.Module):
@@ -138,9 +149,9 @@ class Block(nn.Module):
 
     def __init__(self, cfg: ModelConfig):
         super().__init__()
-        self.norm1 = RMSNorm(cfg.d_model)
+        self.norm1 = RMSNorm(cfg.d_model, cfg.rms_norm_eps)
         self.attn = CausalSelfAttention(cfg)
-        self.norm2 = RMSNorm(cfg.d_model)
+        self.norm2 = RMSNorm(cfg.d_model, cfg.rms_norm_eps)
         self.mlp = MLP(cfg)
 
     def forward(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
@@ -158,7 +169,7 @@ class HotsteelLM(nn.Module):
         self.tok_emb = nn.Embedding(cfg.vocab_size, cfg.d_model)
         self.drop = nn.Dropout(cfg.dropout)
         self.blocks = nn.ModuleList([Block(cfg) for _ in range(cfg.n_layer)])
-        self.norm_f = RMSNorm(cfg.d_model)
+        self.norm_f = RMSNorm(cfg.d_model, cfg.rms_norm_eps)
         self.lm_head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
 
         if cfg.tie_embeddings:

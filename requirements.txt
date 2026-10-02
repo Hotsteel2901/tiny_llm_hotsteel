@@ -1,7 +1,19 @@
-# hotsteel0.1 - 轻量中文文本生成语言模型
+# hotsteel0.1 - 中文文本生成语言模型
 # Python >= 3.10
+
+# --- 训练与推理（必需） ---
 torch>=2.2.0
 tokenizers>=0.15.0
 numpy>=1.24.0
 PyYAML>=6.0
 tqdm>=4.66.0
+
+# --- 数据获取（可选，下载公开数据集时需要） ---
+huggingface_hub>=0.23.0
+
+# --- GGUF 导出（可选，见 README 第 9 节） ---
+# 注意：这些仅在「导出 HF 格式 → 转换 GGUF」时需要
+safetensors>=0.4.0
+gguf>=0.6.0
+transformers>=4.40.0
+sentencepiece>=0.2.0

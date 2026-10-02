@@ -1,0 +1,63 @@
+# hotsteel0.1 —— 1 亿参数（~97M）配置
+# 目标：更大容量 + 真实指令数据，提升泛化；导出 GGUF 供 llama.cpp 加载。
+
+project:
+  name: hotsteel0.1-100m
+  seed: 1337
+
+paths:
+  corpus: data/corpus_100m.jsonl       # 真实指令+合成+教师语料
+  tokenizer_dir: data/tokenizer_100m    # BPE 词表输出目录
+  checkpoint_dir: checkpoints_100m      # 权重输出目录
+  log_dir: checkpoints_100m/logs
+
+data:
+  # 序列拼接格式：<|user|>提问<|assistant|>回答<|end|>
+  max_seq_len: 512            # 支持更长回答
+  val_ratio: 0.01             # 验证集比例
+  num_workers: 0              # Windows 下建议 0
+  packing: false              # false=逐样本对齐(推荐)
+  mask_instruction: true      # 只在回答部分计算损失
+
+tokenizer:
+  vocab_size: 16384           # 更大词表，提升中文压缩率
+  min_frequency: 2
+  special_tokens: ["<pad>", "<|user|>", "<|assistant|>", "<|end|>", "<unk>"]
+
+model:
+  d_model: 768                # 隐藏维度
+  n_layer: 12                 # Transformer 层数
+  n_head: 12                  # 注意力头数
+  d_ff: 2048                  # FFN 中间维度（SwiGLU）
+  dropout: 0.0                # 数据量增大后关闭 dropout
+  rope_theta: 10000.0         # RoPE 基频（llama.cpp 默认）
+  rms_norm_eps: 1.0e-6        # 与 llama.cpp 默认一致
+  tie_embeddings: true        # 输入/输出 embedding 共享
+  use_swiglu: true            # 使用 SwiGLU 前馈
+  # 参数量估算：(4*d^2 + 3*d*d_ff)*L + vocab*d ≈ 97.5M
+
+train:
+  batch_size: 24              # 实测 8GB 显存下的最优批大小（32 会溢出）
+  grad_accum_steps: 1
+  lr: 4.0e-4                  # 峰值学习率
+  min_lr: 4.0e-5
+  weight_decay: 0.1
+  betas: [0.9, 0.95]
+  grad_clip: 1.0
+  warmup_iters: 400
+  max_iters: 12000            # 约 3 个 epoch
+  eval_interval: 250
+  eval_iters: 40
+  log_interval: 20
+  save_interval: 3000
+  device: auto
+  dtype: auto
+  compile: false
+
+generate:
+  max_new_tokens: 256
+  temperature: 0.8
+  top_k: 40
+  top_p: 0.9
+  repetition_penalty: 1.1
+  greedy: false

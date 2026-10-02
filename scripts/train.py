@@ -95,6 +95,7 @@ def build_model_config(cfg, vocab_size: int) -> ModelConfig:
         d_ff=cfg.model.d_ff,
         dropout=cfg.model.dropout,
         rope_theta=cfg.model.rope_theta,
+        rms_norm_eps=cfg.model.get("rms_norm_eps", 1e-6),
         max_seq_len=cfg.data.max_seq_len,
         tie_embeddings=cfg.model.tie_embeddings,
         use_swiglu=cfg.model.use_swiglu,
@@ -138,13 +139,17 @@ def main() -> None:
     logger.info(
         f"样本: 训练={stats['n_train_examples']} 验证={stats['n_val_examples']} | "
         f"tokens: 训练={stats['train_tokens']} 验证={stats['val_tokens']} | "
-        f"chunks: 训练={stats['train_chunks']} 验证={stats['val_chunks']}"
+        f"序列数: 训练={stats['train_chunks']} 验证={stats['val_chunks']}"
     )
 
+    from functools import partial
+    from hotsteel.dataset import collate_batch
+
+    collate = partial(collate_batch, pad_id=tokenizer.pad_id)
     train_bs = max(1, min(cfg.train.batch_size, len(train_ds)))
     if train_bs != cfg.train.batch_size:
         logger.info(
-            f"训练集较小({len(train_ds)} 块)，batch_size 由 {cfg.train.batch_size} 调整为 {train_bs}"
+            f"训练集较小({len(train_ds)} 样本)，batch_size 由 {cfg.train.batch_size} 调整为 {train_bs}"
         )
     train_loader = DataLoader(
         train_ds,
@@ -152,6 +157,7 @@ def main() -> None:
         shuffle=True,
         num_workers=cfg.data.num_workers,
         drop_last=False,
+        collate_fn=collate,
     )
     val_bs = max(1, min(cfg.train.batch_size, len(val_ds)))
     val_loader = DataLoader(
@@ -160,6 +166,7 @@ def main() -> None:
         shuffle=False,
         num_workers=cfg.data.num_workers,
         drop_last=False,
+        collate_fn=collate,
     )
 
     # --- 模型 ---

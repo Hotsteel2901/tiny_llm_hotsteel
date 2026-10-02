@@ -94,16 +94,28 @@ class ExampleLMDataset(Dataset):
             cut = max(0, min(ans_start - 1, len(y)))
             y = [-100] * cut + y[cut:]
 
-        # 补齐到 L；pad 位置标签同样屏蔽
-        pad_len = L - len(x)
-        if pad_len > 0:
-            x = x + [self.tokenizer.pad_id] * pad_len
-            y = y + [-100] * (L - len(y))
-
+        x = x[:L]
+        y = y[:L]
+        # 不在此处补齐；交给 collate_batch 按 batch 内最长序列动态 padding
         return {
-            "input_ids": torch.tensor(x[:L], dtype=torch.long),
-            "labels": torch.tensor(y[:L], dtype=torch.long),
+            "input_ids": torch.tensor(x, dtype=torch.long),
+            "labels": torch.tensor(y, dtype=torch.long),
         }
+
+
+def collate_batch(batch: List[Dict[str, torch.Tensor]], pad_id: int = 0):
+    """按 batch 内最长序列动态 padding，显著减少无效计算。"""
+    max_len = max(item["input_ids"].numel() for item in batch)
+    xs, ys = [], []
+    for item in batch:
+        x, y = item["input_ids"], item["labels"]
+        pad = max_len - x.numel()
+        if pad > 0:
+            x = torch.cat([x, torch.full((pad,), pad_id, dtype=torch.long)])
+            y = torch.cat([y, torch.full((pad,), -100, dtype=torch.long)])
+        xs.append(x)
+        ys.append(y)
+    return {"input_ids": torch.stack(xs), "labels": torch.stack(ys)}
 
 
 def pack_tokens(
@@ -113,8 +125,14 @@ def pack_tokens(
     repeat_until_chunks: int = 0,
     add_eos_between: bool = True,
 ) -> torch.Tensor:
-    """把所有样例编码并拼接成一个长 id 序列（备用的打包策略）。"""
-    stream: List[int] = []
+    """把所有样例编码并拼接成一个长 id 序列（备用的打包策略）。
+
+    用 ``array.array`` 累积而不是 Python list：大语料（数千万 token）下
+    list 每个元素要 ~28 字节对象开销，array 只要 8 字节，内存差 4 倍以上。
+    """
+    from array import array
+
+    stream: "array[int]" = array("q")
     for item in items:
         stream.extend(tokenizer.build_example(item["instruction"], item["response"]))
         if add_eos_between:
@@ -130,7 +148,7 @@ def pack_tokens(
                     stream.append(tokenizer.end_id)
             rounds += 1
 
-    return torch.tensor(stream, dtype=torch.long)
+    return torch.frombuffer(stream, dtype=torch.int64).clone()
 
 
 class PackedLMDataset(Dataset):
