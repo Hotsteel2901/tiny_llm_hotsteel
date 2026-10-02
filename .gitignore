@@ -37,3 +37,4 @@ tok_llama.txt
 .idea/
 .DS_Store
 Thumbs.db
+*.err
