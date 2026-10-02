@@ -107,6 +107,9 @@ def main() -> None:
     ap.add_argument("--config", default="configs/small.yaml")
     ap.add_argument("--max_iters", type=int, default=None, help="覆盖训练步数")
     ap.add_argument("--resume", default=None, help="从 checkpoint 继续训练")
+    ap.add_argument("--start_iter", type=int, default=0,
+                    help="起始迭代步（分段训练用：恢复权重后从该步继续，"
+                         "LR 调度仍按 --max_iters 总长计算，保证多段拼接后曲线连续）")
     ap.add_argument("--device", default=None)
     args = ap.parse_args()
 
@@ -218,7 +221,7 @@ def main() -> None:
     best_val = float("inf")
     data_iter = iter(train_loader)
 
-    for it in range(cfg.train.max_iters + 1):
+    for it in range(args.start_iter, cfg.train.max_iters + 1):
         lr = get_lr(it, cfg.train)
         for g in optim.param_groups:
             g["lr"] = lr

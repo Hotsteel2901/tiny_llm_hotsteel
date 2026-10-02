@@ -1,0 +1,59 @@
+project:
+  name: hotsteel0.1-sft
+  seed: 1337
+paths:
+  corpus: data/corpus_sft.jsonl
+  tokenizer_dir: data/tokenizer_100m
+  checkpoint_dir: checkpoints_sft
+  log_dir: checkpoints_sft/logs
+data:
+  max_seq_len: 512
+  val_ratio: 0.01
+  num_workers: 0
+  packing: true
+  mask_instruction: true
+tokenizer:
+  vocab_size: 16384
+  min_frequency: 2
+  special_tokens:
+  - <pad>
+  - <|user|>
+  - <|assistant|>
+  - <|end|>
+  - <unk>
+model:
+  d_model: 768
+  n_layer: 12
+  n_head: 12
+  d_ff: 2048
+  dropout: 0.0
+  rope_theta: 10000.0
+  rms_norm_eps: 1.0e-06
+  tie_embeddings: true
+  use_swiglu: true
+train:
+  batch_size: 12
+  grad_accum_steps: 1
+  lr: 0.00012
+  min_lr: 1.0e-05
+  weight_decay: 0.1
+  betas:
+  - 0.9
+  - 0.95
+  grad_clip: 1.0
+  warmup_iters: 150
+  max_iters: 1200
+  eval_interval: 150
+  eval_iters: 40
+  log_interval: 20
+  save_interval: 600
+  device: auto
+  dtype: auto
+  compile: false
+generate:
+  max_new_tokens: 256
+  temperature: 0.8
+  top_k: 40
+  top_p: 0.9
+  repetition_penalty: 1.1
+  greedy: false

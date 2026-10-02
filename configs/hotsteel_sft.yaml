@@ -1,0 +1,63 @@
+# hotsteel0.1 —— SFT —— 1 亿参数窄域对齐（~97M）配置
+# 目标：更大容量 + 真实指令数据，提升泛化；导出 GGUF 供 llama.cpp 加载。
+
+project:
+  name: hotsteel0.1-sft
+  seed: 1337
+
+paths:
+  corpus: data/corpus_sft.jsonl       # 真实指令+合成+教师语料
+  tokenizer_dir: data/tokenizer_100m    # BPE 词表输出目录
+  checkpoint_dir: checkpoints_sft      # 权重输出目录
+  log_dir: checkpoints_sft/logs
+
+data:
+  # 序列拼接格式：<|user|>提问<|assistant|>回答<|end|>
+  max_seq_len: 512            # 支持更长回答
+  val_ratio: 0.01             # 验证集比例
+  num_workers: 0              # Windows 下建议 0
+  packing: true               # 打包提升 GPU 利用率
+  mask_instruction: true      # 只在回答部分计算损失
+
+tokenizer:
+  vocab_size: 16384           # 更大词表，提升中文压缩率
+  min_frequency: 2
+  special_tokens: ["<pad>", "<|user|>", "<|assistant|>", "<|end|>", "<unk>"]
+
+model:
+  d_model: 768                # 隐藏维度
+  n_layer: 12                 # Transformer 层数
+  n_head: 12                  # 注意力头数
+  d_ff: 2048                  # FFN 中间维度（SwiGLU）
+  dropout: 0.0                # 数据量增大后关闭 dropout
+  rope_theta: 10000.0         # RoPE 基频（llama.cpp 默认）
+  rms_norm_eps: 1.0e-6        # 与 llama.cpp 默认一致
+  tie_embeddings: true        # 输入/输出 embedding 共享
+  use_swiglu: true            # 使用 SwiGLU 前馈
+  # 参数量估算：(4*d^2 + 3*d*d_ff)*L + vocab*d ≈ 97.5M
+
+train:
+  batch_size: 12              # 打包下每 iter 6144 token
+  grad_accum_steps: 1
+  lr: 1.2e-4                  # SFT 低学习率
+  min_lr: 1.0e-5
+  weight_decay: 0.1
+  betas: [0.9, 0.95]
+  grad_clip: 1.0
+  warmup_iters: 150
+  max_iters: 1200             # 短程 SFT（约 1.9 epoch）
+  eval_interval: 150
+  eval_iters: 40
+  log_interval: 20
+  save_interval: 600
+  device: auto
+  dtype: auto
+  compile: false
+
+generate:
+  max_new_tokens: 256
+  temperature: 0.8
+  top_k: 40
+  top_p: 0.9
+  repetition_penalty: 1.1
+  greedy: false

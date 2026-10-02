@@ -9,11 +9,13 @@
 |---|---|---|---|
 | **small** | 约 12M | 教学 / 快速验证 | `configs/small.yaml` |
 | **100m** | 约 **97.5M** | 正式训练，支持导出 GGUF | `configs/hotsteel_100m.yaml` |
+| **v2** | 约 **97.5M** | 52 万条真实语料 + 序列打包 | `configs/hotsteel_v2.yaml` |
+| **sft** | 约 **97.5M** | 窄域对齐（推荐成品，见 3.3） | `configs/hotsteel_sft.yaml` |
 
 - 架构：Pre-LN Transformer + RMSNorm + RoPE（Llama 约定）+ SwiGLU，权重共享
 - 分词：自训练 ByteLevel BPE（16k 词表）
 - 训练目标：因果语言模型（next-token），序列格式 `<|user|>问<|assistant|>答<|end|>`
-- 语料：真实中文指令数据（约 4.8 万条）+ 合成常识问答 + 教师蒸馏语料
+- 语料：真实中文指令数据 + 合成常识问答 + 教师蒸馏语料（v2 起扩到 52 万条）
 - 设备：自动选择 CUDA / MPS / CPU；CUDA 上自动启用 bfloat16
 - **可导出 GGUF，直接用 llama.cpp 加载运行**
 
@@ -25,9 +27,11 @@
 hotsteel0.1/
 ├── configs/
 │   ├── small.yaml              # 12M 配置
-│   └── hotsteel_100m.yaml      # 100M 配置
+│   ├── hotsteel_100m.yaml      # 100M 配置
+│   ├── hotsteel_v2.yaml        # 100M + 52 万真实语料 + 打包
+│   └── hotsteel_sft.yaml       # 窄域对齐（推荐）
 ├── data/
-│   ├── raw/                    # 原始数据集（alpaca 中文）
+│   ├── raw/                    # 原始数据集（alpaca 中文、Belle 0.5M）
 │   ├── corpus_synth.jsonl      # 合成常识问答
 │   ├── teacher_qa.jsonl        # 教师蒸馏语料
 │   ├── corpus_100m.jsonl       # 合并后的训练语料（按 instruction 去重）
@@ -35,7 +39,7 @@ hotsteel0.1/
 ├── hotsteel/
 │   ├── config.py               # 配置加载
 │   ├── tokenizer.py            # 分词器训练/封装
-│   ├── dataset.py              # 语料加载 + 变长序列 + 动态 padding
+│   ├── dataset.py              # 语料加载 + 变长序列 + 动态 padding + 打包
 │   ├── model.py                # Transformer 定义（Llama 同构）
 │   ├── generate.py             # 采样与单轮问答
 │   └── utils.py                # 种子/设备/精度/日志
@@ -44,12 +48,17 @@ hotsteel0.1/
 │   ├── teacher_generate.py     # 生成教师蒸馏语料
 │   ├── import_teacher.py       # 导入教师语料
 │   ├── prepare_corpus.py       # 多源合并成大语料
+│   ├── build_corpus_v2.py      # 接入 Belle 真实语料 + 清洗去重
+│   ├── build_corpus_sft.py     # 核心语料上采样，构建 SFT 语料
 │   ├── train_tokenizer.py      # 训练 BPE
-│   ├── train.py                # 训练主脚本
+│   ├── train.py                # 训练主脚本（支持 --resume / --start_iter）
 │   ├── chat.py                 # 命令行对话 / 批量提问
+│   ├── eval_qa.py              # L1/L2/L3 三层题集评测
 │   ├── export_hf.py            # 导出 HuggingFace Llama 格式
 │   ├── to_gguf.py              # 转换为 GGUF
-│   └── verify_gguf.py          # 校验 PyTorch 与 llama.cpp 等价性
+│   ├── verify_gguf.py          # 校验 PyTorch 与 llama.cpp 等价性
+│   ├── compare_ppl.py          # perplexity 数值对照（可复刻 llama 协议）
+│   └── publish.py              # 一键 导出→量化→验证
 ├── checkpoints_100m/           # 100M 权重与训练配置存档
 ├── export/                     # HF / GGUF 导出产物
 ├── requirements.txt
@@ -187,6 +196,55 @@ python scripts/train.py --config configs/hotsteel_v2.yaml
 512 token 窗口，GPU 利用率从动态 padding 的浪费中解放出来。代价是
 `mask_instruction` 失效（全 token 计算 loss）——这是业界标准做法
 （Qwen/Llama 预训练均如此），模型同时学会建模提问本身，通常利大于弊。
+
+**踩坑记录**：直接上 52 万条大语料后，核心问答**反而退化了**
+（"太阳是什么" 变复读、"你好" 编造名字）。原因是 Belle 占 84%，
+而承载核心问答的教师/合成语料只有约 2100 条（0.4%），被彻底淹没。
+val PPL 变好只说明整体分布拟合更佳，不代表核心能力没被稀释。
+**这是「数据扩量」的典型负优化，必须靠 SFT 阶段救回来。**
+
+## 3.3 SFT：窄域对齐（v2 的救命一步）
+
+对应 DeepSeek 报告里 "宽域预训练 → 窄域 SFT" 的范式：**宽域学语言，窄域学回答**。
+
+`scripts/build_corpus_sft.py` 把核心语料**上采样 12 倍**，再掺入 3 万条
+真实指令防止灾难性遗忘：
+
+```bash
+python scripts/build_corpus_sft.py --core data/corpus_100m.jsonl \
+    --pool data/corpus_v2.jsonl --out data/corpus_sft.jsonl \
+    --core_repeat 12 --pool_n 30000
+
+# 从 v2 权重出发做短程 SFT（低 LR、打包、1200 iter ≈ 1.9 epoch，约 2.5 分钟）
+python scripts/train.py --config configs/hotsteel_sft.yaml \
+    --resume checkpoints_v2/final.pt
+```
+
+**三层题集对照**（`scripts/eval_qa.py`，贪婪解码）：
+
+| 层级 | v1（9.5 万条） | v2（52 万条，未 SFT） | **v2 + SFT** |
+|---|---|---|---|
+| L1 核心问答 | 8/10 | 2/10 ❌ | **9/10** ✅ |
+| L2 同义改写 | 0/5 ❌ | 1/5 | **3/5** ✅ |
+| L3 超纲泛化 | 0/5（词语乱码） | 1/5 | 0/5（已变通顺复读） |
+
+val PPL：v1 31.7 → v2 16.03 → **v2+SFT 10.04**（注意 v2 起验证集换成了更难的
+Belle 真实数据，所以对 v2/SFT 是**吃亏的比较**）。
+
+SFT 后的实际效果（llama.cpp + q4_k_m 62MB 量化版）：
+
+```
+Q: 你是谁
+A: 你好，我是 hotsteel0.1，一个在单机上训练的小型中文语言模型，很高兴和你交流。
+
+Q: 简述人类和猿类的不同点
+A: 人类和猿类的主要区别是：人类能直立行走、制造复杂工具并使用语言；
+   而猿类主要生活在树上、以四肢行动。人类有高度发达的智力和语言，猿类更接近原始形态。
+```
+
+**仍存在的短板**：L3 超纲知识（朝代、编程、医学）会事实性编造，且长回答容易
+陷入复读循环。这是 97M 参数 + 5800 万 token 的规模天花板，需要继续扩数据
+与参数才能改善。
 
 ## 4. 关键超参数（configs/small.yaml）
 
